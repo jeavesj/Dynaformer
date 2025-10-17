@@ -423,6 +423,26 @@ def pymol_pocket(receptor_file: Path, ligand_file: Path, pocket_file: Path):
     pymol.cmd.save(f"{str(pocket_file)}", "pocket and not sol.")
 
 
+def rdkit_pdb2sdf(pdb_in: Path, sdf_out: Path):
+    """
+    Read a PDB (protein pocket) with RDKit and write SDF without changing atom order.
+    We avoid OpenBabel here to prevent atom reordering/aromaticity/charge drift.
+    """
+    # read with sanitize=False so we don’t trigger re-kekulization/aromatic re-perception yet
+    m = Chem.MolFromPDBFile(str(pdb_in), removeHs=False, sanitize=False)
+    if m is None:
+        # fall back to a sanitized read if strictly needed
+        m = Chem.MolFromPDBFile(str(pdb_in), removeHs=False, sanitize=True)
+    if m is None:
+        raise RuntimeError(f"RDKit failed to read PDB: {pdb_in}")
+
+    # DO NOT kekulize or change aromaticity here; the project’s `read_mol` -> `correct_sanitize_v2`
+    # will handle sanitization consistently for both ligand and pocket.
+    w = Chem.SDWriter(str(sdf_out))
+    w.write(m)
+    w.close()
+
+
 def obabel_pdb2mol(in_file: Path, out_file: Path):
     run(['obabel', '-ipdb', str(in_file), '-omol', f'-O{str(out_file)}', '-x3v', '-h', '--partialcharge', 'eem'], check=True, stdout=DEVNULL, stderr=DEVNULL)
 
