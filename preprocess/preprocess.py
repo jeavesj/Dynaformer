@@ -89,8 +89,11 @@ def gen_graph(ligand: tuple, pocket: tuple, name: str, protein_cutoff: float, po
     pro_coord, pro_feat, pro_ei, pro_ea = pocket
 
     assert len(lig_coord) == len(lig_feat)
-    assert len(pro_coord) == len(pro_coord)
+    assert len(pro_coord) == len(pro_feat)
 
+    lig_ei = np.asarray(lig_ei, dtype=np.int64)
+    pro_ei = np.asarray(pro_ei, dtype=np.int64)
+    
     # new pocket graph based on protein_cutoff (smaller than 10 A)
     assert protein_cutoff >= pocket_cutoff, \
         f"Protein cutoff {protein_cutoff} should be larger than pocket cutoff {pocket_cutoff}"
@@ -100,13 +103,17 @@ def gen_graph(ligand: tuple, pocket: tuple, name: str, protein_cutoff: float, po
     # select protein atoms within protein cutoff
     pro_atom_mask = np.zeros(len(pro_coord), dtype=bool)
     pro_atom_mask[np.where(cdist(lig_coord, pro_coord) <= protein_cutoff)[1]] = 1
-    pro_edge_mask = np.array([True if pro_atom_mask[i] and pro_atom_mask[j] else False for i, j in zip(*pro_ei)])
-
+    # pro_edge_mask = np.array([True if pro_atom_mask[i] and pro_atom_mask[j] else False for i, j in zip(*pro_ei)])
+    if pro_ei.ndim == 2 and pro_ei.shape[1] > 0:
+        pro_edge_mask = (pro_atom_mask[pro_ei[0]] & pro_atom_mask[pro_ei[1]]).astype(bool)
+    else:
+        pro_edge_mask = np.zeros((0,), dtype=bool)
+    
     pro_coord = pro_coord[pro_atom_mask]
     pro_feat = pro_feat[pro_atom_mask]
-    pro_ei = np.array([pro_ei[0, pro_edge_mask], pro_ei[1, pro_edge_mask]])
+    pro_ei = np.array([pro_ei[0, pro_edge_mask], pro_ei[1, pro_edge_mask]], dtype=np.int64)
     pro_ea = pro_ea[pro_edge_mask]
-    pro_ei = reindex(np.where(pro_atom_mask)[0], pro_ei)
+    pro_ei = reindex(np.where(pro_atom_mask)[0], pro_ei).astype(np.int64, copy=False)
 
     # add spatial edges based on spatial cutoff
     lig_dm = cdist(lig_coord, lig_coord)
@@ -236,7 +243,6 @@ def RF_score(lig_info: dict, pro_info: dict):
             v = d[d < 12].shape[0]
             fp[i, j] = v
     return fp.flatten()
-
 
 
 
