@@ -127,3 +127,20 @@ dmypy.json
 
 # Pyre type checker
 .pyre/
+
+# Intermediate testing files
+first_attempt_checkpoints/
+preprocess/*.csv
+preprocess/*.pkl
+*.err
+*.out
+*parts/
+*.timing/
+all_checkpoints/
+good_scripts/
+*_repro*
+*_fresh*
+*scratch.py
+compare*
+*parts_unsure/
+*merge*
