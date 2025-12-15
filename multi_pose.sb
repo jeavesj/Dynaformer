@@ -1,0 +1,101 @@
+#!/bin/bash --login
+#SBATCH --job-name=dynaformer
+#SBATCH --time=04:59:00
+#SBATCH --mem=32G
+#SBATCH --gpus=v100:1
+#SBATCH --cpus-per-task=2
+#SBATCH --output=/mnt/scratch/jeaves/Dynaformer/logs/%x_%A_%a.out
+#SBATCH --error=/mnt/scratch/jeaves/Dynaformer/logs/%x_%A_%a.err
+
+set -eo pipefail
+
+module purge
+module load Miniforge3
+conda activate dynaformer
+
+REPO_DIR="/mnt/scratch/jeaves/Dynaformer"
+SRC_BASE_DIR="/mnt/scratch/jeaves/CASF-2016"
+DEST_BASE_DIR="${REPO_DIR}"
+MAIN_DIR="/mnt/research/woldring_lab/Members/Eaves/FAIR_PLBAP/results/gnina"
+
+mkdir -p "${DEST_BASE_DIR}/logs" "${MAIN_DIR}"
+
+cd "${REPO_DIR}"
+
+for r in $(seq 1 30); do
+    rank_tag="$(printf '%04d' "${r}")"
+    SRC_DIR="${SRC_BASE_DIR}/gnina_best${rank_tag}"
+    IN_DIR="${DEST_BASE_DIR}/gnina_best${rank_tag}"
+    DATA_CSV="${DEST_BASE_DIR}/gnina_best${rank_tag}_dynaformer_input_paths.csv"
+    PKL_PATH="${DEST_BASE_DIR}/gnina_best${rank_tag}_graphs.pkl"
+    ARCHIVE="${DEST_BASE_DIR}/gnina-best${rank_tag}_dynaformer_struct_and_graphs.tar.gz"
+
+    echo "=== Rank ${rank_tag} ==="
+    echo "Source: ${SRC_DIR}"
+
+    if [ ! -d "${SRC_DIR}" ] || [ -z "$(ls -A "${SRC_DIR}" 2>/dev/null)" ]; then
+        echo "No source directory or directory is empty for rank ${rank_tag}; skipping"
+        continue
+    fi
+
+    echo "Work dir: ${IN_DIR}"
+
+    rm -rf "${IN_DIR}"
+    cp -r "${SRC_DIR}" "${IN_DIR}"
+
+    echo "Building CSV for custom_input at ${DATA_CSV}"
+
+    rm -f "${DATA_CSV}"
+    echo "receptor,ligand,name,pk" > "${DATA_CSV}"
+
+    while IFS= read -r -d '' complex_dir; do
+        pdbid="$(basename "${complex_dir}")"
+        rec_file="$(ls "${complex_dir}"/*_protein.pdb 2>/dev/null | head -n1 || true)"
+        lig_file="$(ls "${complex_dir}"/*_ligand.sdf 2>/dev/null | head -n1 || true)"
+
+        if [ -z "${rec_file}" ] || [ -z "${lig_file}" ]; then
+            echo "Missing receptor or ligand for ${pdbid} in rank ${rank_tag}; skipping this complex"
+            continue
+        fi
+
+        echo "${rec_file},${lig_file},${pdbid},-1" >> "${DATA_CSV}"
+    done < <(find "${IN_DIR}" -mindepth 1 -maxdepth 1 -type d -print0)
+
+    if [ "$(wc -l < "${DATA_CSV}")" -le 1 ]; then
+        echo "No valid complexes for rank ${rank_tag} after CSV build; skipping"
+        rm -f "${DATA_CSV}"
+        rm -rf "${IN_DIR}"
+        continue
+    fi
+
+    echo "Running custom_input.py for rank ${rank_tag}"
+
+    cd "${REPO_DIR}/preprocess"
+    python3 custom_input.py "${DATA_CSV}" "${PKL_PATH}"
+
+    cd "${REPO_DIR}"
+
+    echo "Running Dynaformer evaluation for rank ${rank_tag}"
+
+    rm -f checkpoint/*.csv
+
+    ./run_custom_input_docked.sh "${PKL_PATH}" "gnina_best${rank_tag}"
+
+    RANK_OUT_DIR="${DEST_BASE_DIR}/checkpoint_gnina_best${rank_tag}"
+    mkdir -p "${RANK_OUT_DIR}"
+
+    if compgen -G "checkpoint/*.csv" > /dev/null; then
+        mv checkpoint/*.csv "${RANK_OUT_DIR}/"
+    else
+        echo "Warning: no CSV outputs found for rank ${rank_tag}"
+    fi
+
+    tar -czf "${ARCHIVE}" -C "${DEST_BASE_DIR}" \
+        "$(basename "${PKL_PATH}")" \
+        "$(basename "${RANK_OUT_DIR}")"
+
+    rm -rf "${IN_DIR}"
+
+    cp "${ARCHIVE}" "${MAIN_DIR}/"
+    cp -r "${RANK_OUT_DIR}" "${MAIN_DIR}/"
+done
